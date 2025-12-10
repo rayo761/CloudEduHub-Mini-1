@@ -2,113 +2,71 @@
     "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
     "contentVersion": "1.0.0.0",
     "parameters": {
-        "adminUsername": { "type": "string", "defaultValue": "azureuser" },
-        "adminPassword": { "type": "securestring" },
-        "vmName": { "type": "string", "defaultValue": "CloudEduHubVM" },
-        "vNetName": { "type": "string", "defaultValue": "CloudEduHub-VNet" },
-        "appServicePlanName": { "type": "string", "defaultValue": "CloudEduHub-Plan" },
-        "appName": { "type": "string", "defaultValue": "cloudeduhub-paas" }
+        "appServicePlanName": {
+            "type": "string",
+            "defaultValue": "CloudEduHub-Plan-D1"
+        },
+        "appName": {
+            "type": "string", 
+            "defaultValue": "cloudeduhub-dia1"
+        }
     },
     "variables": {
-        "location": "mexicocentral",
-        "subnetName": "default"
+        "location": "centralus"  // <-- Cambié a centralus (mejor disponibilidad Free Tier)
     },
     "resources": [
-        // 1. Red Virtual (VNet) y Subred (Requisito para VM y escalabilidad de App Service)
-        {
-            "type": "Microsoft.Network/virtualNetworks",
-            "apiVersion": "2020-11-01",
-            "name": "[parameters('vNetName')]",
-            "location": "[variables('location')]",
-            "properties": {
-                "addressSpace": { "addressPrefixes": ["10.0.0.0/16"] },
-                "subnets": [ { "name": "[variables('subnetName')]", "properties": { "addressPrefix": "10.0.0.0/24" } } ]
-            }
-        },
-        // 2. Interfaz de Red para la VM
-        {
-            "type": "Microsoft.Network/networkInterfaces",
-            "apiVersion": "2020-11-01",
-            "name": "[concat(parameters('vmName'), '-nic')]",
-            "location": "[variables('location')]",
-            "dependsOn": ["[resourceId('Microsoft.Network/virtualNetworks', parameters('vNetName'))]"],
-            "properties": {
-                "ipConfigurations": [{
-                    "name": "ipconfig1",
-                    "properties": {
-                        "subnet": { "id": "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('vNetName'), variables('subnetName'))]" },
-                        "privateIPAllocationMethod": "Dynamic"
-                    }
-                }]
-            }
-        },
-        // 3. Conjunto de Disponibilidad (HA - Alta Disponibilidad)
-        {
-            "type": "Microsoft.Compute/availabilitySets",
-            "apiVersion": "2022-03-01",
-            "name": "[concat(parameters('vmName'), '-avset')]",
-            "location": "[variables('location')]",
-            "properties": {
-                "platformFaultDomainCount": 2,
-                "platformUpdateDomainCount": 2,
-                "sku": { "name": "Aligned" }
-            }
-        },
-        // 4. Máquina Virtual (IaaS) - Requisito B1s
-        {
-            "type": "Microsoft.Compute/virtualMachines",
-            "apiVersion": "2022-03-01",
-            "name": "[parameters('vmName')]",
-            "location": "[variables('location')]",
-            "dependsOn": [
-                "[resourceId('Microsoft.Network/networkInterfaces', concat(parameters('vmName'), '-nic'))]",
-                "[resourceId('Microsoft.Compute/availabilitySets', concat(parameters('vmName'), '-avset'))]"
-            ],
-            "properties": {
-                "hardwareProfile": { "vmSize": "Standard_B1s" }, // REQUISITO: B1s
-                "osProfile": {
-                    "computerName": "[parameters('vmName')]",
-                    "adminUsername": "[parameters('adminUsername')]",
-                    "adminPassword": "[parameters('adminPassword')]"
-                },
-                "storageProfile": {
-                    "imageReference": {
-                        "publisher": "Canonical",
-                        "offer": "0001-com-ubuntu-server-focal",
-                        "sku": "20_04-lts-gen2",
-                        "version": "latest"
-                    },
-                    "osDisk": { "createOption": "FromImage", "managedDisk": { "storageAccountType": "Standard_LRS" } }
-                },
-                "networkProfile": {
-                    "networkInterfaces": [{ "id": "[resourceId('Microsoft.Network/networkInterfaces', concat(parameters('vmName'), '-nic'))]" }]
-                },
-                "availabilitySet": { "id": "[resourceId('Microsoft.Compute/availabilitySets', concat(parameters('vmName'), '-avset'))]" } // REQUISITO: HA
-            }
-        },
-        // 5. Plan de App Service (PaaS base) - Requisito B1
+        // SOLO 2 RECURSOS: App Service Plan + App Service
         {
             "type": "Microsoft.Web/serverfarms",
             "apiVersion": "2020-06-01",
             "name": "[parameters('appServicePlanName')]",
             "location": "[variables('location')]",
-            "sku": { "name": "B1", "capacity": 1 }, // REQUISITO: B1
-            "properties": { "perSiteScaling": false }
+            "sku": {
+                "name": "F1",
+                "tier": "Free",
+                "size": "F1",
+                "family": "F",
+                "capacity": 1
+            },
+            "kind": "linux",
+            "properties": {
+                "perSiteScaling": false,
+                "reserved": true
+            }
         },
-        // 6. Azure App Service (PaaS) - Requisito PHP
         {
             "type": "Microsoft.Web/sites",
             "apiVersion": "2020-06-01",
             "name": "[parameters('appName')]",
             "location": "[variables('location')]",
-            "dependsOn": [ "[resourceId('Microsoft.Web/serverfarms', parameters('appServicePlanName'))]" ],
+            "dependsOn": [
+                "[resourceId('Microsoft.Web/serverfarms', parameters('appServicePlanName'))]"
+            ],
+            "kind": "app",
             "properties": {
                 "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', parameters('appServicePlanName'))]",
                 "siteConfig": {
-                    "appSettings": [],
-                    "linuxFxVersion": "PHP|8.0" // REQUISITO: PHP
-                }
+                    "linuxFxVersion": "PHP|8.0",
+                    "appSettings": [
+                        {
+                            "name": "APP_ENV",
+                            "value": "production"
+                        },
+                        {
+                            "name": "WEBSITE_RUN_FROM_PACKAGE",
+                            "value": "1"
+                        }
+                    ],
+                    "use32BitWorkerProcess": true
+                },
+                "httpsOnly": false  // <-- Temporalmente false para pruebas
             }
         }
-    ]
+    ],
+    "outputs": {
+        "appServiceUrl": {
+            "type": "string",
+            "value": "[concat('http://', parameters('appName'), '.azurewebsites.net')]"
+        }
+    }
 }
